@@ -1,0 +1,864 @@
+var express = require('express');
+var router = express.Router();
+var authRouter = require('../../authRouter');
+var async = require('async');
+//var JiraAppNew =require('../../models/jiraAppNew');
+var qTestCases = require('../../models/qtestcase');
+var testlogs = require('../../models/testlog');
+
+let executionTrend ={
+	sprint: null,
+	sit_Count: null,
+	uat_count: null,
+	prod_count: null,
+	totalTestCaseCount: null
+}
+
+let executionTrendArray=[];
+
+function setExecutionTrend(_sprint,_sit_Count,_uat_count,_prod_count,_totalTestCaseCount){
+	this.sprint =_sprint,
+	this.sitCount=_sit_Count,
+	this.uat_count=_uat_count,
+	this.prod_count=_prod_count,
+	this.totalTestCaseCount=_totalTestCaseCount
+}
+
+
+let executionDetails ={
+	sprint:null,
+	compontent:null,
+	testCaseId:null,
+	sit_executing:null,
+	uat_executing:null,
+	prod_executing:null
+}
+
+var executionDetailsArray=[];
+
+function setExecutionDetails(_sprint,_component,_testCaseId,_sit_executing,_uat_executing,_prod_executing){
+	this.sprint=_sprint,
+	this.compontent=_component,
+	this.testCaseId=_testCaseId,
+	this.sit_executing=_sit_executing,
+	this.uat_executing=_uat_executing,
+	this.prod_executing=_prod_executing
+}
+
+var todayDate= new Date().toISOString().split('T')[0];
+var startDate = todayDate-30;
+
+async function getIterationList(lob, project){
+    return new Promise (function (resolve , reject){
+    qTestCases.distinct("NTS_Sprint", { lob:  {"$eq": lob } , "NTS_Sprint": {
+    "$ne": null
+    } }, function(err, doc) {
+    if(err) {console.log(err); reject(err)}
+    else{
+    console.log("Review 1-->"+  doc);
+    resolve (doc);
+    }
+    
+    });
+});
+}
+
+async function getTestCaseIds(project,sprintName, stDate,endDate){
+
+		return new Promise (function (resolve , reject){
+			qTestCases.distinct("pid", { NTS_Sprint:  
+						{"$eq": sprintName } , 
+						jirakey:  {"$eq": project } 
+					}, function(err, doc) {
+						if(err) {console.log(err); reject(err)}
+				else{
+					console.log("Inside getTestCaseIds-->"+ doc);	
+					console.log("TotalTestCaseCount-->"+doc.length);
+					resolve (doc);	 
+				}
+				
+			});
+		});
+}
+async function getDistinctTestCasesExecutedByEnv(env,testCaseIDList,stDate,endDate){
+	return new Promise (function (resolve , reject){
+		console.log("getDistinctTestCasesExecutedByEnv")
+		testlogs.distinct("testCaseId", { testCaseId:  {"$in": testCaseIDList } , executedEnv: {"$eq": env}, "timestamp": {
+			"$gte": new Date(stDate +"T00:00:01.001Z"),
+			"$lte": new Date(endDate +"T00:00:01.001Z")
+		}}, function(err, doc) {
+			if(err) {console.log(err); reject(err)}
+			else{
+				console.log("getDistinctTestCasesExecutedByEnv-->"+"------"+ doc);	
+				resolve (doc.length);	 
+			}
+			
+		});
+	});
+}
+
+
+async function getExecutionDetails(env,testCaseIDList,stDate,endDate){
+	return new Promise (function (resolve , reject){		
+		testlogs.distinct("testCaseId", { testCaseId:  {"$in": testCaseIDList } , executedEnv: {"$eq": env}, "timestamp": {
+			"$gte": new Date(stDate +"T00:00:01.001Z"),
+			"$lte": new Date(endDate +"T00:00:01.001Z")
+		}}, function(err, doc) {
+			if(err) {console.log(err); reject(err)}
+			else{
+				console.log("getExecutionDetails-->---------"+env+"++++++++++++++++++++++++++++++"+ doc);	
+
+				resolve (doc);	 
+			}
+			
+		});
+	});
+}
+
+async function getExecutionSummary(lob, project, stDate, endDate){
+	return new Promise (async function (resolve , reject){	
+	var sprintList;	 
+	let getIterationListObj =await getIterationList(lob,project);	 
+	sprintList =  getIterationListObj ;
+	console.log("-------sprintList"+sprintList);
+	console.log("sprintList-->"+ typeof sprintList +sprintList[1]);	 
+	for(let i=0 ;i<=sprintList.length; i++){ 
+		if(sprintList[i]!=null){
+			//let exeTrend=new executionTrend() ;
+			var testCaseIDList;
+			let testCaselstObj =await getTestCaseIds(project,sprintList[i], stDate,endDate);
+			var testCaseIDList =testCaselstObj;			
+			executionTrend.totalTestCaseCount=testCaseIDList.length;
+			var sitCount = 0;
+			var uatCount = 0;
+			sitCount= await getDistinctTestCasesExecutedByEnv("SIT", testCaseIDList,stDate, endDate);
+			uatCount= await getDistinctTestCasesExecutedByEnv("UAT", testCaseIDList,stDate, endDate);
+			prodCount= await getDistinctTestCasesExecutedByEnv("PROD", testCaseIDList,stDate, endDate);
+			let exuectionInfo = new setExecutionTrend(sprintList[i],sitCount,uatCount,prodCount,testCaseIDList.length);
+			executionTrendArray.push(exuectionInfo);	 
+		}
+		
+	}; 
+	console.log("2.....inside-getExecutionSummary------------**************--------->"+JSON.stringify(executionTrendArray));
+	resolve (executionTrendArray);
+	});	
+};
+
+router.route('/iteration').get(function(req, res) { 
+	console.log("Test1111");
+	qTestCases.find({ NTS_Sprint: '1F PI-5.5'} , function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log("Abin's arror")
+			console.log(err);
+			return res.status(500).send(err);
+		} 
+		return res.json(doc);
+	});
+});
+
+/*
+get Execution Summary by lob and Project id 
+
+*/
+router.route('/getExecutionsummary').post( function(req, res) {
+	var data = req.body;		
+	console.log("lob is -->"+ data['lob']);
+	console.log("project is -->"+data['projectId'])
+	var stDate="2020-02-01";
+	var endDate="2020-06-01";
+	 getExecutionSummary(data['lob'], data['projectId'] ,stDate,endDate).then(function (response)
+	 {
+		return res.json(response);
+	 } )
+	
+});
+
+router.route('/getExecutionDetails').post( function(req, res) {
+	var data = req.body;		
+	console.log("lob is -->"+ data['lob']);
+	console.log("project is -->"+data['projectId'])
+	var stDate="2020-02-01";
+	var endDate="2020-06-01";
+	console.log("Execution Details....");
+	 getexecutionDetails(data['lob'], data['projectId'] ,stDate,endDate).then(function (response)
+	 {
+		return res.json(response);
+	 } )
+	
+});
+
+//Get testcase Id details New API service
+router.route('/gettestCaseIdDetails').post( function(req, res) {
+	var data = req.body;		
+	testlogs.find({ testCaseId: data['testCaseId']},{"testCaseId":1,"status":1,"executedEnv":1,"timestamp":1,"_id":0} , function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 
+		return res.json(doc);
+	});
+	
+});
+//Get data based on Search creteria New API service
+router.route('/gettDetailsonSearche').post( function(req, res) {
+	var data = req.body;
+   /*  var stDate="2020-02-01";
+	var endDate="2020-06-01";	
+	//Payload
+{
+"lob": "OneFiber_ART3",
+"Components" : "1F-09 Fiber Build",
+"appId":"3GIS",
+"stDate" : "2020-02-01",
+"endDate" : "2020-06-01"
+}
+	 */
+	var stDate = data['stDate'];
+	var endDate= data['endDate'];
+	
+qTestCases.aggregate([   
+    {
+        $lookup:{
+            from: "test_logs",       
+            localField: "pid",   
+            foreignField: "testCaseId", 
+            as: "test_logs"         
+        }
+    },{$unwind:"$test_logs"},{
+        $match:{
+            $and:[{"test_logs.appId" : data['appId']} ,{"lob" : data['lob']} ,{"Components" : data['Components']},				
+			{"test_logs.timestamp": {
+			"$gte": new Date(stDate +"T00:00:01.001Z"),
+			"$lte": new Date(endDate +"T00:00:01.001Z")
+		}}]
+        },
+		
+		
+
+    },
+   // {"$group": { "_id": { testCaseId: "$pid"} } },
+    //{ $group: { "_id": { testCaseId: "$pid"} }, {executedEnv: { $mergeObjects: "$test_logs.executedEnv" } } }},
+     //{ $group: { _id: "$pid", executedEnv: { $mergeObjects: "$test_logs.executedEnv" } } },
+    {   
+        $project:{
+            _id : 0,
+            sprint : "$NTS_Sprint",
+            Components : "$Components",
+            testCaseId     : "$pid",
+            //lob        : 1,
+            appId : "$test_logs.appId",
+			//timestamp  : "$test_logs.timestamp",
+           //uat_executing: {$cond:{if : {$eq: [ "$test_logs.executedEnv", 'UAT' ] }, then: 'True', else: 'False' }},
+		   //sit_executing: {$cond:{if : {$eq: [ "$test_logs.executedEnv", 'SIT' ] }, then: 'True', else: 'False' }},
+		   //prod_executing : {$cond:{if : {$eq: [ "$test_logs.executedEnv", 'PROD' ] }, then: 'True', else: 'False' }},
+		   //excuting: { $concat: [ "$test_logs.executedEnv", " - ", "$test_logs.executedEnv" ] },
+		   executedEnv : "$test_logs.executedEnv",
+		    index: { $indexOfArray: [ "$Components", data['Components'] ] }
+			
+        } 
+    }
+] , function(err, doc) {
+		if(doc){
+			//console.log(doc); 
+		}
+		if(err){
+			//console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 
+		//return res.json(doc);	
+		
+		var output = [];
+
+doc.forEach(function(item) {
+  var existing = output.filter(function(v, i) {
+    return v.testCaseId == item.testCaseId;
+  });
+  if (existing.length) {
+    var existingIndex = output.indexOf(existing[0]);
+    output[existingIndex].executedEnv = output[existingIndex].executedEnv.concat(item.executedEnv);
+  } else {
+    if (typeof item.executedEnv == 'string')
+      item.executedEnv = [item.executedEnv];
+    output.push(item);
+  }
+});
+
+console.log(output);
+return output;
+		
+		/* const mergedArray  = doc;
+		
+		let set = new Set();
+let unionArray = mergedArray.filter(item => {
+  if (!set.has(item.testCaseId)) {
+    set.add(item.testCaseId , item.uat_executing , item.sit_executing , item.prod_executing);
+    return true;
+  }
+  return false;
+}, set);
+console.log(unionArray); */
+		
+		
+		
+		// {"$group": { "_id": { testCaseId: "$pid", executedEnv: "$test_logs.executedEnv" } } },
+		//db.sInsert.aggregate( [ {"$group": { "_id": { post_id: "$post_id", post_message: "$post_message" } } } ]);
+		//var persons = res.json(doc);
+/* var array = doc;
+
+var output = [];
+
+array.forEach(function(item) {
+  var existing = output.filter(function(v, i) {
+    return v.testCaseId == item.testCaseId;
+  });
+  if (existing.length) {
+    var existingIndex = output.indexOf(existing[0]);
+    output[existingIndex].sit_executing = output[existingIndex].sit_executing.concat(item.sit_executing);
+  } else {
+    if (typeof item.sit_executing == 'True')
+      item.sit_executing = [item.sit_executing];
+    output.push(item);
+  }
+});
+
+console.dir(output); */
+
+
+ /* var nameArray = persons.map(personObj => personObj.testCaseId);
+//es5 version
+var nameArray = persons.map(function(personObj){
+      return personObj.testCaseId;
+});
+console.log(nameArray);  */
+
+     /* result = { testCaseId: [] };
+
+Object.keys(data).forEach(function (key) {
+    data[key].forEach(function (a) {
+        [a.testCaseId, key].reduce(function (r, k) {
+            var o = {};
+            if (!r[k]) {
+                r[k] = { _: [] };
+                o[k] = r[k]._;
+                r._.push(o);
+            }
+            return r[k];
+        }, this)._.push({  testCaseId: a.testCaseId, appId: a.appId,sit_executing : a.sit_executing  });
+    }, this);
+}, { _: result.testCaseId });
+
+//console.log(result);
+return result; */
+		
+			
+		
+	});
+	
+	
+	
+	
+});
+
+//With out params 
+async function gettDetailsonSearchwithoutparams(lob,appId){
+	return new Promise (function (resolve , reject){
+    qTestCases.aggregate([
+		 {
+        $lookup:{
+            from: "test_logs",       
+            localField: "pid",   
+            foreignField: "testCaseId", 
+            as: "test_logs"         
+        }
+    },{$unwind:"$test_logs"},
+	
+ 	 {
+        $match:{
+            $and:[{"test_logs.appId" : appId } ,{"lob" : lob} ,				
+		]
+        },			
+
+    },   
+	 
+
+    { "$group": {
+        "_id": { "pid": "$pid", "Components": "$Components" ,"appId" : "$test_logs.appId" ,"lob" : "$lob" , "NTS_Sprint" :"$NTS_Sprint"},
+        "tcount": { "$sum": 1 },
+		 ttags: { $push:  { ttags: "$test_logs.executedEnv" } }
+		
+    }},
+
+    // Unwind twice because "ttags" is now an array of arrays
+    { "$unwind": "$ttags" },
+    { "$unwind": "$ttags" },
+
+    // Now use $addToSet to get the distinct values        
+   { "$group": {
+        "_id": "$_id",
+        "tcount": { "$first": "$tcount" },
+        "tags": { "$addToSet": "$ttags.ttags" }
+    }}, 
+    
+    // Optionally $project to get the fields out of the _id key
+    { "$project": {
+        "_id": 0,
+		"sprint": "$_id.NTS_Sprint",
+		Components: { $arrayElemAt: [ "$_id.Components", 0 ] },	
+		"testCaseId": "$_id.pid",
+		"appId": "$_id.appId",		
+	
+	   uat_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'UAT' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'UAT' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'UAT' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+       sit_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'SIT' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'SIT' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'SIT' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+		   prod_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'PROD' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'PROD' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'PROD' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+	    "executedEnv": "$tags",	
+		"count": "$tcount" ,  
+ 		"lob" : "$_id.lob"
+    }}
+]
+	
+	, function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 		
+        resolve (doc);			
+			
+		
+	});		
+
+	});
+}
+
+//With  params 
+async function gettDetailsonSearchwithparams(lob,appId,Components,stDate,endDate){
+	return new Promise (function (resolve , reject){
+    qTestCases.aggregate([
+		 {
+        $lookup:{
+            from: "test_logs",       
+            localField: "pid",   
+            foreignField: "testCaseId", 
+            as: "test_logs"         
+        }
+    },{$unwind:"$test_logs"},
+	
+ 	 {
+        $match:{
+            $and:[{"test_logs.appId" : appId } ,{"lob" : lob } ,{"Components" : Components'},				
+			{"test_logs.timestamp": {
+			"$gte": new Date(stDate +"T00:00:01.001Z"),
+			"$lte": new Date(endDate +"T00:00:01.001Z")
+		}}]
+        },		
+
+    },  
+
+	 
+
+    { "$group": {
+        "_id": { "pid": "$pid", "Components": "$Components" ,"appId" : "$test_logs.appId" ,"lob" : "$lob" , "NTS_Sprint" :"$NTS_Sprint"},
+        "tcount": { "$sum": 1 },
+		 ttags: { $push:  { ttags: "$test_logs.executedEnv" } }
+		
+    }},
+
+    // Unwind twice because "ttags" is now an array of arrays
+    { "$unwind": "$ttags" },
+    { "$unwind": "$ttags" },
+
+    // Now use $addToSet to get the distinct values        
+   { "$group": {
+        "_id": "$_id",
+        "tcount": { "$first": "$tcount" },
+        "tags": { "$addToSet": "$ttags.ttags" }
+    }}, 
+    
+    // Optionally $project to get the fields out of the _id key
+    { "$project": {
+        "_id": 0,
+		"sprint": "$_id.NTS_Sprint",
+		Components: { $arrayElemAt: [ "$_id.Components", 0 ] },	
+		"testCaseId": "$_id.pid",
+		"appId": "$_id.appId",		
+	
+	   uat_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'UAT' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'UAT' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'UAT' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+       sit_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'SIT' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'SIT' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'SIT' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+		   prod_executing:
+          { $cond:
+            {
+              if: { $or: [ {$eq: [ { $arrayElemAt: [ "$tags", 0 ] }, 'PROD' ] }, {$eq: [ { $arrayElemAt: [ "$tags", 1 ] }, 'PROD' ] } ,{$eq: [ { $arrayElemAt: [ "$tags", 2 ] }, 'PROD' ] } ] },
+              then: 'TRUE',
+              else: "False"
+            }
+          },
+	    "executedEnv": "$tags",	
+		"count": "$tcount" ,  
+ 		"lob" : "$_id.lob"
+    }}
+]
+	
+	, function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 		
+        resolve (doc);			
+			
+		
+	});		
+
+	});
+}
+
+//gettDetailsonSearch
+router.route('/gettDetailsonSearch').post( function(req, res) {
+	var data = req.body;
+	var stDate = data['stDate'];
+	var endDate= data['endDate'];
+	//without params
+	if (data['Components'] == "null") {
+		 gettDetailsonSearchwithoutparams(data['lob'], data['appId'] ).then(function (response)
+		 {
+			return res.json(response);
+		 } )
+    }
+	//with params
+	else {	
+		gettDetailsonSearchwithparams(data['lob'], data['appId'] ,data['Components'], stDate,endDate).then(function (response)
+		 {
+			return res.json(response);
+		 } )
+	}	
+	
+});
+
+
+
+router.route('/gettDetailsonSearchhh').post( function(req, res) {
+	var data = req.body;
+   /*  var stDate="2020-02-01";
+	var endDate="2020-06-01";	
+	//Payload
+{
+"lob": "OneFiber_ART3",
+"Components" : "1F-09 Fiber Build",
+"appId":"3GIS",
+"stDate" : "2020-02-01",
+"endDate" : "2020-06-01"
+}
+	 */
+	var stDate = data['stDate'];
+	var endDate= data['endDate'];
+	
+qTestCases.aggregate(
+         // Pipeline
+    [
+	{
+        $lookup:{
+            from: "test_logs",       
+            localField: "pid",   
+            foreignField: "testCaseId", 
+            as: "test_logs"         
+        }
+    },{$unwind:"$test_logs"},
+        // Stage 1
+        {
+            $group: {
+                _id: null,
+                Total: {
+                    $sum: 1
+                },
+                docs: {
+                    $push: '$$ROOT'
+                }
+            }
+        },
+
+        // Stage 2
+        {
+            $project: {
+                _id: 0,
+                Total: 1,
+                Released: {
+                    $filter: {
+                        input: "$docs",
+                        as: "doc",
+                        cond: {
+                            $ne: ["$$doc.$test_logs.executedEnv", ""]
+                        }
+                    }
+                },
+                Unreleased: {
+                    $filter: {
+                        input: "$docs",
+                        as: "doc",
+                        cond: {
+                            $eq: ["$$doc.$test_logs.executedEnv", ""]
+                        }
+                    }
+                },
+            }
+        },
+
+        // Stage 3
+        {
+            $project: {
+                Total: 1,
+                Released: {
+                    $size: '$Released'
+                },
+                UnReleased: {
+                    $size: '$Unreleased'
+                }
+            }
+        },
+
+    ]
+
+ , function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 
+		return res.json(doc);		
+			
+		
+	});
+	
+	
+	
+	
+});
+
+
+
+router.route('/gettDetailsonSearchh').post( function(req, res) {
+	var data = req.body;
+   /*  var stDate="2020-02-01";
+	var endDate="2020-06-01";	
+	//Payload
+{
+"lob": "OneFiber_ART3",
+"Components" : "1F-09 Fiber Build",
+"appId":"3GIS",
+"stDate" : "2020-02-01",
+"endDate" : "2020-06-01"
+}
+	 */
+	var stDate = data['stDate'];
+	var endDate= data['endDate'];
+	
+qTestCases.aggregate([   
+    {
+        $lookup:{
+            from: "test_logs",       
+            localField: "pid",   
+            foreignField: "testCaseId", 
+            as: "test_logs"         
+        }
+    },{$unwind:"$test_logs"},
+	{ "$facet": {
+    "UATExists": [
+      { "$match" : { "test_logs.executedEnv": { "$exists": 'UAT' }}},
+      { "$count": "UATExists" },
+    ],
+    "SITExists": [
+      { "$match" : {"test_logs.executedEnv": { "$exists": 'SIT' }}},
+      { "$count": "SITExists" }
+    ],
+    "testCaseId": [
+      { "$match" : {"test_logs.appId": { "$exists": data['appId'] }}},
+	  { "$testCaseId": "testCaseId" }
+    ]
+  }},
+  { "$project": {
+    "UATExists": { "$arrayElemAt": ["$UATExists.UATExists", 0] },
+    "SITExists": { "$arrayElemAt": ["$SITExists.SITExists", 0] },
+    "testCaseId": { "$arrayElemAt": ["$testCaseId.testCaseId", 0] }
+  }}
+
+    
+] , function(err, doc) {
+		if(doc){
+			console.log(doc); 
+		}
+		if(err){
+			console.log(doc)
+			console.log(err);
+			return res.status(500).send(err);
+		} 
+		return res.json(doc);		
+			
+		
+	});
+	
+	
+	
+	
+});
+
+
+
+
+
+
+async function getexecutionDetails(lob, project, stDate, endDate){
+	return new Promise (async function (resolve , reject){	
+	var sprintList;	 
+	var distinctTestCaselst;
+	var distinctTestCaselst_UAT;
+	let getIterationListObj =await getIterationList(lob,project);	 
+	sprintList =  getIterationListObj ;
+	for(let i=0 ;i<=sprintList.length; i++){ 
+		if(sprintList[i]!=null){
+			//let exeTrend=new executionTrend() ;
+			var testCaseIDList;
+			let testCaselstObj =await getTestCaseIds(project,sprintList[i], stDate,endDate);
+			var testCaseIDList =testCaselstObj;			
+	 
+			let distinctTestCaselstObj = await getExecutionDetails("SIT",testCaseIDList,stDate,endDate);
+			distinctTestCaselst = distinctTestCaselstObj;
+			//Get Component list based on testcase IDS
+			var getComponentsList;
+			let getComponentsObj =await getComponentId(distinctTestCaselst,project,sprintList[i], stDate,endDate);
+			var getComponentsList =getComponentsObj; 
+			//End
+			for(let j=0; j<=distinctTestCaselst.length;j++){
+				//dispaly component 
+				let _com = null;			
+				if(getComponentsList[j]){
+					try{					
+					let _temp =  JSON.parse(JSON.stringify(getComponentsList[j]));					
+					_com = _temp['Components']&& _temp['Components'][0]?_temp['Components'][0]:null;
+					}catch(e){
+						console.log("Parse error ",e);
+					}
+				}
+				//End
+				let _executiondet = new setExecutionDetails(sprintList[i],_com,distinctTestCaselst[j],"true","","");
+				executionDetailsArray.push(_executiondet);
+			}		
+			let distinctTestCaselstObj_UAT = await getExecutionDetails("UAT",testCaseIDList,stDate,endDate);	 
+			distinctTestCaselst_UAT =distinctTestCaselstObj_UAT;
+			//Get Component list based on testcase IDS
+			var getComponentsListUAT;
+			let getComponentsObjUAT =await getComponentId(distinctTestCaselst_UAT,project,sprintList[i], stDate,endDate);
+			var getComponentsListUAT =getComponentsObjUAT; 
+			//End
+			for(let j=0; j<=distinctTestCaselst_UAT.length;j++){
+				//Uat component Display
+				let _comUAT = null;			
+				if(getComponentsListUAT[j]){
+					try{
+					let _tempUAT =  JSON.parse(JSON.stringify(getComponentsListUAT[j]));
+					_comUAT = _tempUAT['Components']&& _tempUAT['Components'][0]?_tempUAT['Components'][0]:null;
+					}catch(e){
+						console.log("Parse error ",e);
+					}
+				}
+				//End
+				let _executiondet_uat = new setExecutionDetails(sprintList[i],_comUAT,distinctTestCaselst_UAT[j],"","true","");
+				    pushToArrayIfKeyNotExist(executionDetailsArray,_executiondet_uat);
+			}
+		}		
+	}; 
+	console.log("2.....inside-getExecutionSummary------------**************--------->"+JSON.stringify(executionDetailsArray));
+	resolve (executionDetailsArray);
+	});	
+};
+
+ function pushToArrayIfKeyNotExist(executionDetailsArray,_data){
+	var index = executionDetailsArray.findIndex(x => x.testCaseId==_data.testCaseId)
+	// here you can check specific property for an object whether it exist in your array or not	 
+	if (index>-1){		 
+			executionDetailsArray[index].uat_executing="true";
+	}
+	else {
+		executionDetailsArray.push(_data);	 
+	}
+}
+
+function getDistinctSprint(req, res){
+	qTestCases.distinct("NTS_Sprint", { lob:  {"$eq": data['lob'] } }, function(err, doc) {
+		if(err) return res.status(500).send(err);
+		return res.json(doc.sort());
+	});
+}
+
+//Get Componets Based on testcaseIDS
+async function getComponentId(testCaseIDList,project,sprintName, stDate,endDate){
+	return new Promise (function (resolve , reject){
+		console.log('NTS_Sprint: {"$eq": '+sprintName+' } ,jirakey:  {"$eq": '+project+' } ,pid:  {"$in": '+testCaseIDList +'}},{"Components":1}');
+		qTestCases.find({ NTS_Sprint:  
+			{"$eq": sprintName } , 
+			jirakey:  {"$eq": project } ,
+			pid:  {"$in": testCaseIDList }
+		},{"Components":1,"_id":0}, function(err, doc) {
+		if(err) {console.log(err); reject(err)}
+		else{
+			console.log("Inside Components-->"+ doc);	
+			console.log("ComponentsCount-->"+doc.length);
+			resolve (doc);	 
+		}
+		});
+	});
+}
+
+module.exports = {router, authRouter};
+
+ 
